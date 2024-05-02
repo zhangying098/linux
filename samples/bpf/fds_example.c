@@ -19,17 +19,17 @@
 #include "sock_example.h"
 #include "bpf_util.h"
 
-#define BPF_F_PIN	(1 << 0)
-#define BPF_F_GET	(1 << 1)
-#define BPF_F_PIN_GET	(BPF_F_PIN | BPF_F_GET)
+#define BPF_F_PIN (1 << 0)
+#define BPF_F_GET (1 << 1)
+#define BPF_F_PIN_GET (BPF_F_PIN | BPF_F_GET)
 
-#define BPF_F_KEY	(1 << 2)
-#define BPF_F_VAL	(1 << 3)
-#define BPF_F_KEY_VAL	(BPF_F_KEY | BPF_F_VAL)
+#define BPF_F_KEY (1 << 2)
+#define BPF_F_VAL (1 << 3)
+#define BPF_F_KEY_VAL (BPF_F_KEY | BPF_F_VAL)
 
-#define BPF_M_UNSPEC	0
-#define BPF_M_MAP	1
-#define BPF_M_PROG	2
+#define BPF_M_UNSPEC 0
+#define BPF_M_MAP 1
+#define BPF_M_PROG 2
 
 char bpf_log_buf[BPF_LOG_BUF_SIZE];
 
@@ -49,26 +49,33 @@ static void usage(void)
 
 static int bpf_prog_create(const char *object)
 {
+	// 初始化 BPF 指令集
 	static struct bpf_insn insns[] = {
+		// 将立即数1加载到寄存器0中
 		BPF_MOV64_IMM(BPF_REG_0, 1),
+		// 退出 BPF 程序
 		BPF_EXIT_INSN(),
 	};
+	// 统计 BPF 指令数量
 	size_t insns_cnt = ARRAY_SIZE(insns);
 	struct bpf_object *obj;
 	int err;
 
 	if (object) {
+		// 打开指定的BPF对象文件，并加载该文件
 		obj = bpf_object__open_file(object, NULL);
 		assert(!libbpf_get_error(obj));
+		// 加载BPF对象文件
 		err = bpf_object__load(obj);
 		assert(!err);
+		// 返回加载的程序的文件描述符
 		return bpf_program__fd(bpf_object__next_program(obj, NULL));
 	} else {
-		LIBBPF_OPTS(bpf_prog_load_opts, opts,
-			.log_buf = bpf_log_buf,
-			.log_size = BPF_LOG_BUF_SIZE,
-		);
-
+		// 如果传入的object参数为空，则直接加载内联的BPF程序
+		// 定义加载BPF程序的选项，并设置日志缓冲区和大小
+		LIBBPF_OPTS(bpf_prog_load_opts, opts, .log_buf = bpf_log_buf,
+			    .log_size = BPF_LOG_BUF_SIZE, );
+		// 加载内联的BPF程序，指定程序类型为SOCKET_FILTER，许可证类型为GPL
 		return bpf_prog_load(BPF_PROG_TYPE_SOCKET_FILTER, NULL, "GPL",
 				     insns, insns_cnt, &opts);
 	}
@@ -80,26 +87,40 @@ static int bpf_do_map(const char *file, uint32_t flags, uint32_t key,
 	int fd, ret;
 
 	if (flags & BPF_F_PIN) {
+		/*
+			创建 ebpf map;
+
+			int bpf_map_create(enum bpf_map_type map_type,
+					const char *map_name,
+					__u32 key_size,
+					__u32 value_size,
+					__u32 max_entries,
+					const struct bpf_map_create_opts *opts)
+		*/
 		fd = bpf_map_create(BPF_MAP_TYPE_ARRAY, NULL, sizeof(uint32_t),
 				    sizeof(uint32_t), 1024, NULL);
 		printf("bpf: map fd:%d (%s)\n", fd, strerror(errno));
 		assert(fd > 0);
 
+		// 将 ebpf map fd 绑定到文件系统中指定的文件
 		ret = bpf_obj_pin(fd, file);
 		printf("bpf: pin ret:(%d,%s)\n", ret, strerror(errno));
 		assert(ret == 0);
 	} else {
+		// 从文件中获取 ebpf map fd
 		fd = bpf_obj_get(file);
 		printf("bpf: get fd:%d (%s)\n", fd, strerror(errno));
 		assert(fd > 0);
 	}
 
 	if ((flags & BPF_F_KEY_VAL) == BPF_F_KEY_VAL) {
+		// 更新 ebpf map 的 value 值
 		ret = bpf_map_update_elem(fd, &key, &value, 0);
 		printf("bpf: fd:%d u->(%u:%u) ret:(%d,%s)\n", fd, key, value,
 		       ret, strerror(errno));
 		assert(ret == 0);
 	} else if (flags & BPF_F_KEY) {
+		// 根据 key 查询 value 值
 		ret = bpf_map_lookup_elem(fd, &key, &value);
 		printf("bpf: fd:%d l->(%u):%u ret:(%d,%s)\n", fd, key, value,
 		       ret, strerror(errno));
@@ -131,8 +152,8 @@ static int bpf_do_prog(const char *file, uint32_t flags, const char *object)
 	assert(sock > 0);
 
 	ret = setsockopt(sock, SOL_SOCKET, SO_ATTACH_BPF, &fd, sizeof(fd));
-	printf("bpf: sock:%d <- fd:%d attached ret:(%d,%s)\n", sock, fd,
-	       ret, strerror(errno));
+	printf("bpf: sock:%d <- fd:%d attached ret:(%d,%s)\n", sock, fd, ret,
+	       strerror(errno));
 	assert(ret == 0);
 
 	return 0;
@@ -148,6 +169,7 @@ int main(int argc, char **argv)
 		switch (opt) {
 		/* General args */
 		case 'F':
+			// optarg 表示当前选项的参数值
 			file = optarg;
 			break;
 		case 'P':
@@ -161,6 +183,7 @@ int main(int argc, char **argv)
 			mode = BPF_M_MAP;
 			break;
 		case 'k':
+			// 将 key 转为无符号长整型并存储在 Key 中
 			key = strtoul(optarg, NULL, 0);
 			flags |= BPF_F_KEY;
 			break;
