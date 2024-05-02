@@ -20,15 +20,17 @@
 
 static int cstate_map_fd, pstate_map_fd;
 
-#define MAX_CPU			8
-#define MAX_PSTATE_ENTRIES	5
-#define MAX_CSTATE_ENTRIES	3
-#define MAX_STARS		40
+#define MAX_CPU 8
+#define MAX_PSTATE_ENTRIES 5
+#define MAX_CSTATE_ENTRIES 3
+#define MAX_STARS 40
 
-#define CPUFREQ_MAX_SYSFS_PATH	"/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq"
-#define CPUFREQ_LOWEST_FREQ	"208000"
-#define CPUFREQ_HIGHEST_FREQ	"12000000"
+#define CPUFREQ_MAX_SYSFS_PATH \
+	"/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq"
+#define CPUFREQ_LOWEST_FREQ "208000"
+#define CPUFREQ_HIGHEST_FREQ "12000000"
 
+// 描述 CPU 的状态数据，对应 3 个级别的空闲状态 和 5 个级别的性能状态
 struct cpu_stat_data {
 	unsigned long cstate[MAX_CSTATE_ENTRIES];
 	unsigned long pstate[MAX_PSTATE_ENTRIES];
@@ -75,6 +77,7 @@ static void cpu_stat_print(void)
 	}
 }
 
+// 获取 ebpf kern prog 捕获 cpu state 数据，并保存在 stat_data 数组
 static void cpu_stat_update(int cstate_fd, int pstate_fd)
 {
 	unsigned long key, value;
@@ -103,40 +106,54 @@ static void cpu_stat_update(int cstate_fd, int pstate_fd)
  * the specific CPU to handle scheduling; this results in all cpus can be
  * waken up once and produce ftrace event 'trace_cpu_idle'.
  */
+/*
+函数功能：
+	逐个将自身运行任务的亲和性设置到每个 CPU 上，从而唤醒特定的 CPU 来处理调度；
+	进而所有 CPU 可以同时被唤醒，并产生 ftrace 事件 'trace_cpu_idle'。
+	ebpf kern prog 对 trace_cpu_idle tracepoint 进行监控。 
+*/
 static int cpu_stat_inject_cpu_idle_event(void)
 {
 	int rcpu, i, ret;
 	cpu_set_t cpumask;
 	cpu_set_t original_cpumask;
 
+	// 用于获取系统中的 CPU 数量
 	ret = sysconf(_SC_NPROCESSORS_CONF);
 	if (ret < 0)
 		return -1;
 
+	// 获取当前运行进程所在的CPU编号
 	rcpu = sched_getcpu();
 	if (rcpu < 0)
 		return -1;
 
 	/* Keep track of the CPUs we will run on */
+	// 获取当前任务的 CPU 亲和性掩码，存储在 original_cpumask
 	sched_getaffinity(0, sizeof(original_cpumask), &original_cpumask);
 
 	for (i = 0; i < ret; i++) {
-
 		/* Pointless to wake up ourself */
+		// 判断当前CPU编号是否等于当前进程运行在的CPU编号
 		if (i == rcpu)
 			continue;
 
 		/* Pointless to wake CPUs we will not run on */
+		// 检查 CPU 是否在 original_cpumask 上
 		if (!CPU_ISSET(i, &original_cpumask))
 			continue;
 
+		// 将 cpumask 清零
 		CPU_ZERO(&cpumask);
+		// 将 i 代表的 CPU 编号设置到 cpumask 上
 		CPU_SET(i, &cpumask);
 
+		// 设置当前进程的 CPU 亲和性
 		sched_setaffinity(0, sizeof(cpumask), &cpumask);
 	}
 
 	/* Enable all the CPUs of the original mask */
+	// 将 CPU 设置为原始的亲和性掩码
 	sched_setaffinity(0, sizeof(original_cpumask), &original_cpumask);
 	return 0;
 }
@@ -150,22 +167,33 @@ static int cpu_stat_inject_cpu_idle_event(void)
  * for triggering ftrace event 'trace_cpu_frequency' and then recovery back to
  * the maximum frequency value 1.2GHz.
  */
+/*
+ * 长时间没有频率变化并且无法获取到 'trace_cpu_frequency' 的 ftrace 事件，
+ * 这会导致 pstate 统计出现很大的偏差。
+ * 
+ * scaling_max_freq 文件是 Linux 内核中用于控制 CPU 最大工作频率的一个系统文件
+ *
+ * 为了解决这个问题，以下代码强制将 'scaling_max_freq' 设置为 208MHz，
+ * 以触发 'trace_cpu_frequency' ftrace 事件，然后恢复到最大频率值 1.2GHz。
+ */
 static int cpu_stat_inject_cpu_frequency_event(void)
 {
 	int len, fd;
-
+	// 打开 'scaling_max_freq' 文件以便写入频率值
 	fd = open(CPUFREQ_MAX_SYSFS_PATH, O_WRONLY);
 	if (fd < 0) {
 		printf("failed to open scaling_max_freq, errno=%d\n", errno);
 		return fd;
 	}
 
+	// 将频率值设置为 208MHz
 	len = write(fd, CPUFREQ_LOWEST_FREQ, strlen(CPUFREQ_LOWEST_FREQ));
 	if (len < 0) {
 		printf("failed to open scaling_max_freq, errno=%d\n", errno);
 		goto err;
 	}
 
+	// 将频率值恢复为 1.2GHz
 	len = write(fd, CPUFREQ_HIGHEST_FREQ, strlen(CPUFREQ_HIGHEST_FREQ));
 	if (len < 0) {
 		printf("failed to open scaling_max_freq, errno=%d\n", errno);
