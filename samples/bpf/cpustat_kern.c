@@ -233,7 +233,7 @@ int bpf_prog1(struct cpu_args *ctx)
 SEC("tracepoint/power/cpu_frequency")
 int bpf_prog2(struct cpu_args *ctx)
 {
-	u64 *pts, *cstate, *pstate, prev_state, cur_ts, delta;
+	u64 *pts, *cstate, *pstate, cur_ts, delta;
 	u32 key, cpu, pstate_idx;
 	u64 *val;
 
@@ -253,8 +253,6 @@ int bpf_prog2(struct cpu_args *ctx)
 	cstate = bpf_map_lookup_elem(&my_map, &key);
 	if (!cstate)
 		return 0;
-	// 保存之前 pstate 频率
-	prev_state = *pstate;
 	// 记录当前 pstate 频率
 	*pstate = ctx->state;
 
