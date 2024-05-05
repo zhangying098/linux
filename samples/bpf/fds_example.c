@@ -72,6 +72,7 @@ static int bpf_prog_create(const char *object)
 		return bpf_program__fd(bpf_object__next_program(obj, NULL));
 	} else {
 		// 如果传入的object参数为空，则直接加载内联的BPF程序
+
 		// 定义加载BPF程序的选项，并设置日志缓冲区和大小
 		LIBBPF_OPTS(bpf_prog_load_opts, opts, .log_buf = bpf_log_buf,
 			    .log_size = BPF_LOG_BUF_SIZE, );
@@ -135,14 +136,17 @@ static int bpf_do_prog(const char *file, uint32_t flags, const char *object)
 	int fd, sock, ret;
 
 	if (flags & BPF_F_PIN) {
+		// 创建 ebpf prog，加载到内核
 		fd = bpf_prog_create(object);
 		printf("bpf: prog fd:%d (%s)\n", fd, strerror(errno));
 		assert(fd > 0);
 
+		// 将 ebpf prog 绑定到 bpffd file 上
 		ret = bpf_obj_pin(fd, file);
 		printf("bpf: pin ret:(%d,%s)\n", ret, strerror(errno));
 		assert(ret == 0);
 	} else {
+		// 从文件中获取 ebpf prog fd
 		fd = bpf_obj_get(file);
 		printf("bpf: get fd:%d (%s)\n", fd, strerror(errno));
 		assert(fd > 0);
@@ -151,6 +155,7 @@ static int bpf_do_prog(const char *file, uint32_t flags, const char *object)
 	sock = open_raw_sock("lo");
 	assert(sock > 0);
 
+	// 将eBPF程序关联到原始套接字上
 	ret = setsockopt(sock, SOL_SOCKET, SO_ATTACH_BPF, &fd, sizeof(fd));
 	printf("bpf: sock:%d <- fd:%d attached ret:(%d,%s)\n", sock, fd, ret,
 	       strerror(errno));
